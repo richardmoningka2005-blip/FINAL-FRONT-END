@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production build
+dist/
+build/
+target/
+
+# Database files
+*.db
+*.mv.db
+*.trace.db
+/plagiarism-checker-backend/data/
+
+# Environment and sensitive keys
+.env
+.env.local
+
+# IDE and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
