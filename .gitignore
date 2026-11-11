@@ -24,3 +24,15 @@ target/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Exclude unrelated assignments / materials
+/firebase/
+/frontendd/
+/kelasfrontend/
+/sample-documents/
+*.zip
+app.js
+basic.js
+front-end 1.js
+New Text Document.txt
+package-lock.json
