@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   ShieldAlert, 
   ShieldCheck, 
@@ -19,7 +21,8 @@ import {
   FileText,
   UserCheck,
   TrendingDown,
-  Info
+  Info,
+  Printer
 } from 'lucide-react';
 
 export default function Results() {
@@ -147,6 +150,170 @@ export default function Results() {
     };
   });
 
+  // Fungsi Export Laporan Resmi Dosen ke PDF (jsPDF + autoTable)
+  const exportOfficialPdf = () => {
+    if (!session) return;
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // 1. Header Resmi Dokumen / Kop Surat
+    doc.setFillColor(30, 41, 59); // Slate-800
+    doc.rect(0, 0, pageWidth, 28, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('UNIVERSITAS KLABAT (UNKLAB)', 14, 11);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(203, 213, 225);
+    doc.text('Fakultas Ilmu Komputer - Sistem Verifikasi Integritas & Penilaian Orisinalitas Tugas Mahasiswa', 14, 18);
+    doc.text(`Dicetak Otomatis: ${new Date().toLocaleString('id-ID')}`, 14, 23);
+
+    // 2. Metadata Sesi Tugas
+    doc.setTextColor(15, 23, 42);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('LAPORAN RESMI HASIL PEMERIKSAAN PLAGIARISME & NILAI AKHIR', 14, 38);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Judul Sesi     : ${session.sessionTitle}`, 14, 46);
+    doc.text(`Mata Kuliah    : ${session.courseName}`, 14, 52);
+    doc.text(`Total Berkas   : ${session.totalFiles} Mahasiswa (${session.totalPairs} Pasangan Perbandingan Silang)`, 14, 58);
+    doc.text(`Tanggal Cek    : ${new Date(session.createdAt).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, 14, 64);
+
+    // Ringkasan Statistik Kotak
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 70, pageWidth - 28, 16, 2, 2, 'FD');
+
+    doc.setFontSize(9);
+    doc.setTextColor(51, 65, 85);
+    doc.text(`Ringkasan: Terindikasi Plagiat: ${plagiatCount} | Perlu Review: ${reviewCount} | Aman & Orisinal: ${amanCount}`, 18, 80);
+
+    // 3. Tabel Rekapitulasi Nilai & Evaluasi Tiap Mahasiswa
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(30, 41, 59);
+    doc.text('1. REKAPITULASI NILAI AKHIR & STATUS ORISINALITAS MAHASISWA', 14, 96);
+
+    const studentRows = studentStats.map((st, i) => [
+      i + 1,
+      st.submission.studentName,
+      st.submission.originalFilename,
+      `${st.maxSimilarity}% (${st.otherStudent})`,
+      st.estimatedScore,
+      st.individualGrade,
+      st.explanation
+    ]);
+
+    autoTable(doc, {
+      startY: 100,
+      head: [['No', 'Nama Mahasiswa', 'Nama Berkas', 'Kemiripan Tertinggi', 'Nilai', 'Grade', 'Alasan & Analisis Akademik']],
+      body: studentRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [37, 99, 235], // Blue-600
+        textColor: 255,
+        fontSize: 8,
+        fontStyle: 'bold',
+        halign: 'center'
+      },
+      styles: {
+        fontSize: 7.5,
+        cellPadding: 2.5,
+        overflow: 'linebreak'
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 8 },
+        1: { fontStyle: 'bold', cellWidth: 32 },
+        2: { cellWidth: 32 },
+        3: { halign: 'center', cellWidth: 28 },
+        4: { halign: 'center', fontStyle: 'bold', cellWidth: 12 },
+        5: { halign: 'center', fontStyle: 'bold', cellWidth: 12 },
+        6: { cellWidth: 'auto' }
+      },
+      didParseCell: function(data) {
+        if (data.section === 'body' && data.column.index === 5) {
+          const val = data.cell.raw;
+          if (val === 'A') data.cell.styles.textColor = [16, 185, 129];
+          else if (val === 'B') data.cell.styles.textColor = [37, 99, 235];
+          else if (val === 'C') data.cell.styles.textColor = [217, 119, 6];
+          else data.cell.styles.textColor = [225, 29, 72];
+        }
+      }
+    });
+
+    // 4. Tabel Daftar Pasangan yang Terindikasi Plagiat / Review (Jika Ada)
+    const flaggedPairsTable = results.filter(r => r.similarityPercentage >= 15);
+    if (flaggedPairsTable.length > 0) {
+      doc.addPage();
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(30, 41, 59);
+      doc.text('2. RINCIAN PERBANDINGAN SILANG YANG MEMERLUKAN TINJAUAN DOSEN', 14, 20);
+
+      const pairRows = flaggedPairsTable.map((r, i) => [
+        i + 1,
+        `${r.studentAName} vs ${r.studentBName}`,
+        `${r.similarityPercentage}%`,
+        `${r.originalityPercentage}%`,
+        r.grade,
+        r.status,
+        r.aiAnalysisNotes || 'Analisis teks otomatis Spring Boot'
+      ]);
+
+      autoTable(doc, {
+        startY: 25,
+        head: [['No', 'Pasangan Mahasiswa', '% Plagiat', '% Orisinal', 'Grade', 'Status', 'Catatan Evaluasi']],
+        body: pairRows,
+        theme: 'striped',
+        headStyles: {
+          fillColor: [225, 29, 72], // Rose-600
+          textColor: 255,
+          fontSize: 8,
+          fontStyle: 'bold',
+          halign: 'center'
+        },
+        styles: {
+          fontSize: 7.5,
+          cellPadding: 2.5
+        },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 8 },
+          1: { fontStyle: 'bold', cellWidth: 45 },
+          2: { halign: 'center', fontStyle: 'bold', cellWidth: 16 },
+          3: { halign: 'center', cellWidth: 16 },
+          4: { halign: 'center', fontStyle: 'bold', cellWidth: 12 },
+          5: { halign: 'center', cellWidth: 25 },
+          6: { cellWidth: 'auto' }
+        }
+      });
+    }
+
+    // 5. Lembar Pengesahan Tanda Tangan Dosen Pengampu
+    const finalY = (doc).lastAutoTable ? (doc).lastAutoTable.finalY + 20 : 200;
+    const signY = finalY > 230 ? (doc.addPage(), 40) : finalY;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(51, 65, 85);
+    doc.text(`Airmadidi, ${new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })}`, pageWidth - 65, signY);
+    doc.text('Dosen Pengampu / Penguji,', pageWidth - 65, signY + 6);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('( ___________________________ )', pageWidth - 65, signY + 30);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text('NIDN / NIP. ............................', pageWidth - 65, signY + 35);
+
+    // Simpan file PDF
+    const cleanTitle = session.sessionTitle.replace(/[^a-zA-Z0-9]/g, '_');
+    doc.save(`Laporan_Nilai_Plagiarisme_${cleanTitle}.pdf`);
+  };
+
   const getGradeBadge = (grade) => {
     switch (grade) {
       case 'A':
@@ -253,13 +420,25 @@ export default function Results() {
           </div>
         </div>
 
-        <Link
-          to={`/compare/${results[0]?.id || ''}`}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm shadow-md shadow-blue-500/20 transition-all self-start sm:self-auto"
-        >
-          <SplitSquareVertical className="w-4 h-4" />
-          <span>Lihat Berdampingan (Side-by-Side)</span>
-        </Link>
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          {/* Tombol Cetak / Download Laporan Resmi PDF Dosen */}
+          <button
+            type="button"
+            onClick={exportOfficialPdf}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm shadow-md shadow-slate-900/10 transition-all cursor-pointer"
+          >
+            <Download className="w-4 h-4 text-emerald-400" />
+            <span>Download Laporan Dosen (.PDF)</span>
+          </button>
+
+          <Link
+            to={`/compare/${results[0]?.id || ''}`}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+          >
+            <SplitSquareVertical className="w-4 h-4" />
+            <span>Lihat Berdampingan</span>
+          </Link>
+        </div>
       </div>
 
       {/* Summary Stat Cards */}
@@ -503,9 +682,19 @@ export default function Results() {
               Rincian perolehan nilai per file tugas, faktor penyebab nilai, serta korelasinya dengan perbandingan plagiarisme.
             </p>
           </div>
-          <span className="text-xs font-semibold px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200">
-            {studentStats.length} Dokumen Mahasiswa Dinilai
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={exportOfficialPdf}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-sm transition-all cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Unduh Nilai PDF</span>
+            </button>
+            <span className="text-xs font-semibold px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200">
+              {studentStats.length} Dokumen Mahasiswa Dinilai
+            </span>
+          </div>
         </div>
 
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
